@@ -7,11 +7,12 @@
 // Définition des constantes
 #define DHTPIN 27
 #define DHTTYPE DHT11
-#define LED_PIN 2
-#define BUTTON_PIN 4
+#define LED_PIN 35  // LED intégrée de l'ESP32 (peut être changée selon votre montage)
+#define BUTTON_PIN 4  // Bouton pour réinitialiser le WiFi
 
-// Seuil de température
-#define TEMP_THRESHOLD 28.0  // Seuil de température en °C
+// Seuils de température avec hystérésis
+#define TEMP_THRESHOLD_HIGH 23.0  // Seuil haut en °C (activation)
+#define TEMP_THRESHOLD_LOW 22.0   // Seuil bas en °C (désactivation)
 
 // Initialisation du capteur
 DHT dht(DHTPIN, DHTTYPE);
@@ -36,7 +37,7 @@ void resetWiFi() {
   Serial.println("Réinitialisation de la connexion WiFi...");
   WiFi.disconnect();
   delay(1000);
-
+  
   // Reconnexion au WiFi
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("Reconnexion au WiFi");
@@ -80,6 +81,11 @@ void setup() {
   dht.begin();
   
   Serial.println("Système de surveillance de température initialisé");
+  Serial.print("Seuil haut (activation): ");
+  Serial.print(TEMP_THRESHOLD_HIGH);
+  Serial.print("°C, Seuil bas (désactivation): ");
+  Serial.print(TEMP_THRESHOLD_LOW);
+  Serial.println("°C");
 }
 
 void loop() {
@@ -136,9 +142,9 @@ void loop() {
       Serial.println(fbdo.errorReason());
     }
 
-    // Gestion du dépassement de seuil
-    if (t > TEMP_THRESHOLD && !isOverThreshold) {
-      // La température vient de dépasser le seuil
+    // Gestion du dépassement de seuil avec hystérésis
+    if (t > TEMP_THRESHOLD_HIGH && !isOverThreshold) {
+      // La température vient de dépasser le seuil haut
       isOverThreshold = true;
       digitalWrite(LED_PIN, HIGH);  // Allumer la LED (simulation du relais)
       
@@ -147,7 +153,8 @@ void loop() {
       eventJson.set("event", "threshold_exceeded");
       eventJson.set("temperature", t);
       eventJson.set("humidity", h);
-      eventJson.set("threshold", TEMP_THRESHOLD);
+      eventJson.set("threshold_high", TEMP_THRESHOLD_HIGH);
+      eventJson.set("threshold_low", TEMP_THRESHOLD_LOW);
       eventJson.set("timestamp/.sv", "timestamp");
       
       if (Firebase.pushJSON(fbdo, "/threshold_events", eventJson)) {
@@ -158,8 +165,8 @@ void loop() {
         Serial.println(fbdo.errorReason());
       }
     } 
-    else if (t <= TEMP_THRESHOLD && isOverThreshold) {
-      // La température est repassée sous le seuil
+    else if (t <= TEMP_THRESHOLD_LOW && isOverThreshold) {
+      // La température est repassée sous le seuil bas
       isOverThreshold = false;
       digitalWrite(LED_PIN, LOW);  // Éteindre la LED
       
@@ -168,7 +175,8 @@ void loop() {
       eventJson.set("event", "threshold_ended");
       eventJson.set("temperature", t);
       eventJson.set("humidity", h);
-      eventJson.set("threshold", TEMP_THRESHOLD);
+      eventJson.set("threshold_high", TEMP_THRESHOLD_HIGH);
+      eventJson.set("threshold_low", TEMP_THRESHOLD_LOW);
       eventJson.set("timestamp/.sv", "timestamp");
       
       if (Firebase.pushJSON(fbdo, "/threshold_events", eventJson)) {
@@ -178,6 +186,23 @@ void loop() {
         Serial.print("Raison: ");
         Serial.println(fbdo.errorReason());
       }
+    }
+    
+    // Mise à jour de l'état actuel dans Firebase
+    FirebaseJson stateJson;
+    stateJson.set("temperature", t);
+    stateJson.set("humidity", h);
+    stateJson.set("is_over_threshold", isOverThreshold);
+    stateJson.set("threshold_high", TEMP_THRESHOLD_HIGH);
+    stateJson.set("threshold_low", TEMP_THRESHOLD_LOW);
+    stateJson.set("last_update/.sv", "timestamp");
+    
+    if (Firebase.setJSON(fbdo, "/current_state", stateJson)) {
+      Serial.println("État actuel mis à jour dans Firebase");
+    } else {
+      Serial.println("Échec de la mise à jour de l'état actuel");
+      Serial.print("Raison: ");
+      Serial.println(fbdo.errorReason());
     }
   }
 }
